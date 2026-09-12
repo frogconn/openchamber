@@ -211,3 +211,146 @@ test('mobile comparisons drill into files, retry, resume, change source, and yie
     }
   }
 });
+
+test('mobile working changes exposes repository history and keeps it reachable after closing', async () => {
+  const dom = new Window({ url: 'http://localhost' });
+  dom.happyDOM.setWindowSize({ width: 390, height: 844 });
+  const originals = new Map<string, PropertyDescriptor | undefined>();
+  const globals = {
+    window: dom, document: dom.document, navigator: dom.navigator, location: dom.location, localStorage: dom.localStorage,
+    Element: dom.Element, HTMLElement: dom.HTMLElement, HTMLInputElement: dom.HTMLInputElement, Node: dom.Node,
+    customElements: dom.customElements, CSSStyleSheet: dom.CSSStyleSheet,
+    Event: dom.Event, CustomEvent: dom.CustomEvent, KeyboardEvent: dom.KeyboardEvent, MouseEvent: dom.MouseEvent,
+    MutationObserver: dom.MutationObserver, ResizeObserver: dom.ResizeObserver,
+    getComputedStyle: dom.getComputedStyle.bind(dom), requestAnimationFrame: dom.requestAnimationFrame.bind(dom),
+    cancelAnimationFrame: dom.cancelAnimationFrame.bind(dom), IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  for (const [name, value] of Object.entries(globals)) {
+    originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
+  }
+  const commits: GitLogEntry[] = ['a', 'b'].map((letter) => ({
+    hash: letter.repeat(40), date: '2026-09-09T09:22:00Z', message: `Commit ${letter}`,
+    refs: '', body: '', author_name: 'Test Author', author_email: 'test@example.com',
+    filesChanged: 1, insertions: 0, deletions: 0, parents: [],
+  }));
+  const requests: URL[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = Object.assign(async (input: RequestInfo | URL) => {
+    const url = new URL(input instanceof Request ? input.url : String(input), 'http://localhost');
+    if (url.pathname === '/api/fs/home' || url.pathname === '/api/session-folders') return new Promise<Response>(() => {});
+    requests.push(url);
+    switch (url.pathname) {
+      case '/api/git/remotes': return Response.json([]);
+      case '/api/git/remote-url': return Response.json({ url: null });
+      case '/api/git/branch-base': return Response.json({ base: null });
+      case '/api/git/range-files': return Response.json({ files: [] });
+      case '/api/git/range-diff': return Response.json({ diff: '' });
+      case '/api/git/log': return Response.json({ all: commits, latest: commits[0], total: commits.length });
+      case '/api/git/commit-files': return Response.json({ files: [{ path: `commit-${url.searchParams.get('hash')?.[0]}.png`, previousPath: 'old.png', changeType: 'R', insertions: 0, deletions: 0, isBinary: true }] });
+      case '/api/git/commit-diff': return Response.json({ diff: '' });
+      case '/api/git/file-diff': return Response.json({ path: 'working.png', original: '', modified: '', isBinary: true });
+      case '/api/github/pr/status': return Response.json({ connected: true, repo: { owner: 'upstream', repo: 'project' },
+        pr: { number: 42, title: 'Published PR', url: 'https://github.com/upstream/project/pull/42', state: 'open', draft: false, head: 'feature', base: 'main' } });
+      case '/api/github/pulls/list': return Response.json({ connected: true, repo: { owner: 'upstream', repo: 'project' },
+        prs: [{ number: 42, title: 'Published PR', url: 'https://github.com/upstream/project/pull/42', state: 'open', draft: false,
+          head: 'feature', base: 'main', sourceRepo: { owner: 'upstream', repo: 'project', source: 'upstream' } }], hasMore: false });
+      case '/api/walkthrough/pr-diff': return new Response('');
+      default: throw new Error(`Unexpected request ${url.pathname}`);
+    }
+  }, originalFetch);
+
+  const { createRoot } = await import('react-dom/client');
+  const { I18nProvider } = await import('@/lib/i18n');
+  const { RuntimeAPIContext } = await import('@/contexts/runtimeAPIContext');
+  const { createWebAPIs } = await import('../../../web/src/api/index');
+  const { useGitStore } = await import('@/stores/useGitStore');
+  const { useGitHubAuthStore } = await import('@/stores/useGitHubAuthStore');
+  useGitHubAuthStore.setState({ hasChecked: true, status: { connected: true } });
+  const { MobileChangesPane } = await import('./MobileChangesSurface');
+  const apis = createWebAPIs();
+  const status: GitStatus = { current: 'feature', tracking: null, ahead: 0, behind: 0, files: [], isClean: true, diffStats: {} };
+  useGitStore.getState().setActiveDirectory('/repo');
+  const previous = useGitStore.getState().getDirectoryState('/repo');
+  if (!previous) throw new Error('Missing repository state');
+  const now = Date.now();
+  const directories = new Map(useGitStore.getState().directories);
+  directories.set('/repo', {
+    ...previous, status, isGitRepo: true,
+    branches: { all: ['feature', 'main'], current: 'feature', branches: {}, defaultBranches: { origin: 'main' } },
+    log: { all: commits, latest: commits[0], total: 2 }, identity: { userName: 'Test Author', userEmail: 'test@example.com', sshCommand: null },
+    lastStatusFetch: now, lastBranchesFetch: now, lastLogFetch: now, lastIdentityFetch: now, lastRepoCheckAt: now,
+  });
+  useGitStore.setState({ directories });
+  const visible = true;
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  const render = () => act(async () => {
+    root.render(<I18nProvider><RuntimeAPIContext.Provider value={apis}>
+      <MobileChangesPane rootDirectory="/repo"
+        repository={{ rootIsGitRepo: true, gitDirectory: '/repo', nestedRepos: null, nestedRepoSelection: null }}
+        visible={visible} initialDiff={null} />
+    </RuntimeAPIContext.Provider></I18nProvider>);
+  });
+  const click = async (element: HTMLElement) => act(async () => { element.click(); });
+  const flush = async () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+  try {
+    await render();
+    const repositoryViews = container.querySelector<HTMLElement>('[aria-label="Repository views"]');
+    expect(repositoryViews).not.toBeNull();
+    await click(repositoryViews!);
+    const historyItem = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+      .find((element) => element.textContent?.trim() === 'History');
+    expect(historyItem).toBeDefined();
+    await click(historyItem!);
+
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.querySelector('[data-slot="dialog-title"]')?.textContent).toBe('History');
+    expect(dialog?.querySelector('[data-slot="dialog-description"]')?.textContent).toBe('Browse recent commits and inspect changed files.');
+    expect(dialog?.textContent).toContain('Commit a');
+    expect(dialog?.textContent).toContain('Commit b');
+
+    for (const button of dialog!.querySelectorAll<HTMLButtonElement>('button')) {
+      expect(button.querySelector('button')).toBeNull();
+    }
+    const commitRow = [...dialog!.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
+      .find((button) => button.textContent?.includes('Commit a'));
+    expect(commitRow).toBeDefined();
+    expect(commitRow?.getAttribute('aria-expanded')).toBe('false');
+    const rowButtons = commitRow?.parentElement
+      ? [...commitRow.parentElement.children].filter((element): element is HTMLButtonElement => element.tagName === 'BUTTON')
+      : [];
+    expect(rowButtons).toHaveLength(2);
+    const copyButton = rowButtons.find((button) => button !== commitRow);
+    expect(copyButton).toBeDefined();
+    await click(commitRow!);
+    await flush();
+    expect(commitRow?.getAttribute('aria-expanded')).toBe('true');
+    const commitFilesRequest = requests.find((url) => url.pathname === '/api/git/commit-files');
+    expect(commitFilesRequest?.searchParams.get('directory')).toBe('/repo');
+    expect(commitFilesRequest?.searchParams.get('hash')).toBe('a'.repeat(40));
+    await click(copyButton!);
+    expect(commitRow?.getAttribute('aria-expanded')).toBe('true');
+
+    await click(document.querySelector<HTMLElement>('[data-slot="dialog-close"]')!);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    await click(repositoryViews!);
+    const reopenedHistoryItem = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+      .find((element) => element.textContent?.trim() === 'History');
+    expect(reopenedHistoryItem).toBeDefined();
+    await click(reopenedHistoryItem!);
+    expect(document.querySelector('[data-slot="dialog-title"]')?.textContent).toBe('History');
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Commit b');
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.fetch = originalFetch;
+    await dom.happyDOM.abort();
+    for (const [name, descriptor] of originals) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
+  }
+});
