@@ -3,7 +3,8 @@ import { Icon } from '@/components/icon/Icon';
 
 import { toast } from '@/components/ui';
 import { Button } from '@/components/ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { dropdownTriggerVariants } from '@/components/ui/dropdown-trigger';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
 import { ChangesPanel, type ChangesGroupConfig } from '@/components/views/git/ChangesPanel';
@@ -28,8 +29,9 @@ import { useGitBaseBranchStore } from '@/stores/useGitBaseBranchStore';
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
 import { fileDiffFromPatch, isBinaryPatch } from '@/lib/diff/patchFileDiff';
 import type { FileDiffMetadata } from '@pierre/diffs';
-import type { GitStatus } from '@/lib/api/types';
+import type { CommitFileEntry, GitStatus } from '@/lib/api/types';
 import { useI18n } from '@/lib/i18n';
+import { copyTextToClipboard } from '@/lib/clipboard';
 import { generateCommitMessage, stageGitFile, stageGitFiles, unstageGitFile, unstageGitFiles } from '@/lib/gitApi';
 import type { GitRemote } from '@/lib/gitApi';
 import { getLanguageFromExtension, isImageFile } from '@/lib/toolHelpers';
@@ -37,12 +39,15 @@ import {
   useGitStore,
   useGitStatus,
   useGitBranches,
+  useGitLog,
   useIsGitRepo,
   useGitLoadingStatus,
+  useGitLoadingLog,
 } from '@/stores/useGitStore';
 import { NestedRepoResolutionStates } from '@/components/views/git/NestedRepoResolutionStates';
 import { NestedRepoPicker } from '@/components/views/git/NestedRepoPicker';
 import { getRuntimeKey } from '@/lib/runtime-switch';
+import { HistorySection } from '@/components/views/git/HistorySection';
 
 type SyncAction = 'fetch' | 'pull' | 'push' | 'sync' | null;
 type CommitAction = 'commit' | 'commitAndPush' | null;
@@ -118,14 +123,19 @@ export const MobileChangesPane: React.FC<MobileChangesPaneProps> = ({ rootDirect
   const currentDirectory = gitDirectory ?? rootDirectory;
   const status = useGitStatus(currentDirectory || null);
   const branches = useGitBranches(currentDirectory || null);
+  const log = useGitLog(currentDirectory || null);
   const isGitRepo = useIsGitRepo(currentDirectory || null);
   const isLoadingStatus = useGitLoadingStatus(currentDirectory || null);
+  const isLogLoading = useGitLoadingLog(currentDirectory || null);
   const setActiveDirectory = useGitStore((state) => state.setActiveDirectory);
   const ensureAll = useGitStore((state) => state.ensureAll);
   const ensureNestedRepos = useGitStore((state) => state.ensureNestedRepos);
   const selectNestedRepo = useGitStore((state) => state.selectNestedRepo);
   const fetchStatus = useGitStore((state) => state.fetchStatus);
   const fetchBranches = useGitStore((state) => state.fetchBranches);
+  const fetchLog = useGitStore((state) => state.fetchLog);
+  const setLogMaxCount = useGitStore((state) => state.setLogMaxCount);
+  const logMaxCount = useGitStore((state) => state.directories.get(currentDirectory || '')?.logMaxCount ?? 25);
   const prefetchDiffs = useGitStore((state) => state.prefetchDiffs);
   const getDiff = useGitStore((state) => state.getDiff);
   const setDiff = useGitStore((state) => state.setDiff);
@@ -142,6 +152,12 @@ export const MobileChangesPane: React.FC<MobileChangesPaneProps> = ({ rootDirect
   const mode = navigation.ownerKey === ownerKey ? navigation.mode : 'working';
   const route = navigation.ownerKey === ownerKey ? navigation.route : LIST_ROUTE;
   const [modeMenuOpen, setModeMenuOpen] = React.useState(false);
+  const [historyOpen, setHistoryOpen] = React.useState(false);
+  const [expandedCommitHashes, setExpandedCommitHashes] = React.useState<Set<string>>(new Set());
+  const [commitFilesMap, setCommitFilesMap] = React.useState<Map<string, CommitFileEntry[]>>(new Map());
+  const [loadingCommitHashes, setLoadingCommitHashes] = React.useState<Set<string>>(new Set());
+  const commitFilesMapRef = React.useRef(commitFilesMap);
+  const loadingCommitHashesRef = React.useRef(loadingCommitHashes);
   const changeMode = React.useCallback((nextMode: ChangesMode) => {
     setNavigation({ ownerKey, mode: nextMode, route: LIST_ROUTE });
     setModeMenuOpen(false);
@@ -153,8 +169,102 @@ export const MobileChangesPane: React.FC<MobileChangesPaneProps> = ({ rootDirect
   React.useEffect(() => {
     setNavigation((current) => current.ownerKey === ownerKey ? current : { ownerKey, mode: 'working', route: LIST_ROUTE });
     setModeMenuOpen(false);
+    setHistoryOpen(false);
+    setExpandedCommitHashes(new Set());
+    setCommitFilesMap(new Map());
+    setLoadingCommitHashes(new Set());
   }, [ownerKey]);
-  React.useEffect(() => { if (!visible) setModeMenuOpen(false); }, [visible]);
+  React.useEffect(() => {
+    if (!visible) {
+      setModeMenuOpen(false);
+      setHistoryOpen(false);
+      setExpandedCommitHashes(new Set());
+      setCommitFilesMap(new Map());
+      setLoadingCommitHashes(new Set());
+    }
+  }, [visible]);
+
+  React.useEffect(() => {
+    commitFilesMapRef.current = commitFilesMap;
+  }, [commitFilesMap]);
+
+  React.useEffect(() => {
+    loadingCommitHashesRef.current = loadingCommitHashes;
+  }, [loadingCommitHashes]);
+
+  React.useEffect(() => {
+    if (!historyOpen || !visible || !currentDirectory || log) return;
+    void fetchLog(currentDirectory, git, logMaxCount);
+  }, [currentDirectory, fetchLog, git, historyOpen, log, logMaxCount, visible]);
+
+  React.useEffect(() => {
+    if (!historyOpen || !visible || !currentDirectory || expandedCommitHashes.size === 0) return;
+    const hashesToLoad = Array.from(expandedCommitHashes).filter(
+      (hash) => !commitFilesMapRef.current.has(hash) && !loadingCommitHashesRef.current.has(hash),
+    );
+    if (hashesToLoad.length === 0) return;
+
+    let cancelled = false;
+    setLoadingCommitHashes((previous) => {
+      const next = new Set(previous);
+      for (const hash of hashesToLoad) next.add(hash);
+      loadingCommitHashesRef.current = next;
+      return next;
+    });
+    const commitFileRequests: Array<Promise<{ hash: string; files: CommitFileEntry[] }>> = hashesToLoad.map((hash) => git.getCommitFiles(currentDirectory, hash)
+      .then((response) => ({ hash, files: response.files }))
+      .catch(() => ({ hash, files: [] })));
+    void Promise.all(commitFileRequests)
+      .then((results) => {
+        if (cancelled) return;
+        setCommitFilesMap((previous) => {
+          const next = new Map(previous);
+          for (const result of results) next.set(result.hash, result.files);
+          commitFilesMapRef.current = next;
+          return next;
+        });
+        setLoadingCommitHashes((previous) => {
+          const next = new Set(previous);
+          for (const result of results) next.delete(result.hash);
+          loadingCommitHashesRef.current = next;
+          return next;
+        });
+      });
+    return () => {
+      cancelled = true;
+      setLoadingCommitHashes((previous) => {
+        const next = new Set(previous);
+        for (const hash of hashesToLoad) next.delete(hash);
+        loadingCommitHashesRef.current = next;
+        return next;
+      });
+    };
+  }, [currentDirectory, expandedCommitHashes, git, historyOpen, visible]);
+
+  const handleCopyCommitHash = React.useCallback((hash: string) => {
+    void copyTextToClipboard(hash).then((result) => {
+      if (result.ok) toast.success(t('gitView.toast.commitHashCopied'));
+      else toast.error(t('gitView.toast.copyFailed'));
+    });
+  }, [t]);
+
+  const handleToggleCommit = React.useCallback((hash: string) => {
+    setExpandedCommitHashes((previous) => {
+      const next = new Set(previous);
+      if (next.has(hash)) next.delete(hash);
+      else next.add(hash);
+      return next;
+    });
+  }, []);
+
+  const handleHistoryOpenChange = React.useCallback((open: boolean) => {
+    setHistoryOpen(open);
+    if (!open) {
+      setExpandedCommitHashes(new Set());
+      setCommitFilesMap(new Map());
+      setLoadingCommitHashes(new Set());
+    }
+  }, []);
 
   // Allow the host (MobileApp) to push us into a specific diff when the surface
   // is reopened or when an external trigger (e.g. a changed-file tap in chat) requests
@@ -825,6 +935,25 @@ export const MobileChangesPane: React.FC<MobileChangesPaneProps> = ({ rootDirect
               switchBlockedNotice={(status?.files?.length ?? 0) > 0 ? t('gitView.branch.switchBlockedNotice') : null}
             />
           </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 shrink-0 px-0"
+                aria-label={t('gitView.header.repositoryViews')}
+              >
+                <Icon name="more-fill" className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => setHistoryOpen(true)}>
+                <Icon name="history" className="size-4" />
+                {t('gitView.history.title')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <SyncActions
             syncAction={syncAction}
             remotes={effectiveRemotes}
@@ -931,6 +1060,34 @@ export const MobileChangesPane: React.FC<MobileChangesPaneProps> = ({ rootDirect
           await performCheckout(branch);
         }}
       />
+      <Dialog open={historyOpen} onOpenChange={handleHistoryOpenChange}>
+        <DialogContent className="h-[min(82dvh,42rem)] max-h-[calc(100dvh-2rem)] w-[calc(100vw-1rem)] max-w-2xl overflow-hidden p-4 sm:p-6">
+          <DialogHeader>
+            <DialogTitle>{t('gitView.history.title')}</DialogTitle>
+            <DialogDescription>{t('gitView.history.dialogDescription')}</DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 flex-1">
+            <HistorySection
+              log={log}
+              isLogLoading={isLogLoading}
+              logMaxCount={logMaxCount}
+              onLogMaxCountChange={(count) => {
+                if (!currentDirectory) return;
+                setLogMaxCount(currentDirectory, count);
+                void fetchLog(currentDirectory, git, count);
+              }}
+              expandedCommitHashes={expandedCommitHashes}
+              onToggleCommit={handleToggleCommit}
+              commitFilesMap={commitFilesMap}
+              loadingCommitHashes={loadingCommitHashes}
+              onCopyHash={handleCopyCommitHash}
+              directory={currentDirectory}
+              showHeader={false}
+              contentMaxHeightClassName="h-full max-h-none"
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
