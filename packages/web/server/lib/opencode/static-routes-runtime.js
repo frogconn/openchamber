@@ -30,8 +30,9 @@ export const createStaticRoutesRuntime = (dependencies) => {
       console.log(`Serving static files from ${distPath}`);
       app.use(express.static(distPath, {
         setHeaders(res, filePath) {
-          // Service workers should never be long-cached; iOS is especially sensitive.
-          if (typeof filePath === 'string' && filePath.endsWith(`${path.sep}sw.js`)) {
+          // Navigation HTML and service workers must not retain stale deployments.
+          const fileName = path.basename(filePath);
+          if (fileName.endsWith('.html') || fileName === 'sw.js') {
             res.setHeader('Cache-Control', 'no-store');
           }
         },
@@ -46,8 +47,8 @@ export const createStaticRoutesRuntime = (dependencies) => {
         normalizePwaAppName,
         normalizePwaOrientation,
       });
-
       app.get(/^(?!\/api|\/linear|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/, (_req, res) => {
+        res.setHeader('Cache-Control', 'no-store');
         res.sendFile(path.join(distPath, 'index.html'));
       });
       return;
