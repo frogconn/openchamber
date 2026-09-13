@@ -21,7 +21,7 @@ const SECTION_ID = 'subagents';
 /**
  * Running subagents and, more importantly, their blockers: a permission request
  * raised by a child session has no representation in the transcript, so this
- * panel is the only place it becomes visible.
+ * shared section keeps it visible wherever work status is shown.
  */
 export const WorkStatusSubagentsSection: React.FC<Props> = ({ sessionId, directory }) => {
   const { t } = useI18n();
