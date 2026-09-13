@@ -202,7 +202,7 @@ test('mobile comparisons drill into files, retry, resume, change source, and yie
     expect(container.querySelector('h2')).toBeNull();
     expect(requests.some((url) => url.pathname === '/api/git/file-diff' && url.searchParams.get('directory') === '/repo-two')).toBe(false);
   } finally {
-    await act(async () => root.unmount());
+    act(() => { root.unmount(); });
     globalThis.fetch = originalFetch;
     await dom.happyDOM.abort();
     for (const [name, descriptor] of originals) {
@@ -345,7 +345,7 @@ test('mobile working changes exposes repository history and keeps it reachable a
     expect(document.querySelector('[data-slot="dialog-title"]')?.textContent).toBe('History');
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Commit b');
   } finally {
-    await act(async () => root.unmount());
+    act(() => { root.unmount(); });
     globalThis.fetch = originalFetch;
     await dom.happyDOM.abort();
     for (const [name, descriptor] of originals) {
