@@ -346,86 +346,89 @@ export const HistoryCommitRow = React.memo(({
 
   return (
     <li>
-      <button
-        type="button"
-        onClick={onToggle}
-        className={cn(
-          'w-full flex items-start gap-3 px-3 py-2 text-left transition-colors',
-          isGraphMode
-            ? 'hover:bg-[var(--interactive-hover)]/40'
-            : isExpanded ? 'bg-sidebar/90' : 'hover:bg-sidebar/40'
-        )}
-      >
-        {isGraphMode && laned && totalLanes !== undefined ? (
-          <div className="-my-2 shrink-0 self-stretch">
-            <GitGraphSegment laned={laned} totalLanes={totalLanes} isExpanded={isExpanded} />
-          </div>
-        ) : (
-          <div
-            className="h-2 w-2 translate-y-2 rounded-full shrink-0"
-            style={{ backgroundColor: 'var(--status-success)' }}
-            aria-hidden
-          />
-        )}
-        <div className="min-w-0 flex-1">
-          {/* Ref badges */}
-          {isGraphMode ? (() => {
-            const badges = parseRefBadges(entry.refs);
-            return badges.length > 0 ? (
-              <div className="flex flex-wrap gap-1 mb-0.5">
-                {badges.map((badge) => (
-                  <span key={badge.label}
-                    className={cn(
-                      'inline-flex items-center px-1.5 py-0 typography-micro rounded font-medium',
-                      badge.isHead
-                        ? 'bg-[var(--chart-1)] text-[var(--primary-foreground)]'
-                        : badge.isTag
-                        ? 'bg-[var(--chart-5)] text-[var(--primary-foreground)]'
-                        : 'bg-[var(--interactive-hover)] text-[var(--foreground)]'
-                    )}>
-                    {badge.label}
-                  </span>
-                ))}
-              </div>
-            ) : null;
-          })() : null}
-
-          <p className="typography-ui-label font-medium text-foreground line-clamp-1">
-            {entry.message}
-          </p>
-          <div className="flex items-center gap-1 typography-meta text-muted-foreground">
-            <div className="flex items-center gap-1 min-w-0 truncate">
-              <span className="truncate min-w-[3ch]" title={entry.author_name}>
-                {entry.author_name}
-              </span>
-              <span className="shrink-0">·</span>
-              <span className="truncate min-w-0" title={formatCommitDate(entry.date, timeFormatPreference)}>
-                {formatCommitDate(entry.date, timeFormatPreference)}
-              </span>
+      <div className="relative">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={isExpanded}
+          className={cn(
+            'w-full flex items-start gap-3 px-3 py-2 pr-10 text-left transition-colors',
+            isGraphMode
+              ? 'hover:bg-[var(--interactive-hover)]/40'
+              : isExpanded ? 'bg-sidebar/90' : 'hover:bg-sidebar/40'
+          )}
+        >
+          {isGraphMode && laned && totalLanes !== undefined ? (
+            <div className="-my-2 shrink-0 self-stretch">
+              <GitGraphSegment laned={laned} totalLanes={totalLanes} isExpanded={isExpanded} />
             </div>
-            <span className="shrink-0">·</span>
-            <code className="shrink-0 font-mono">
-              {entry.hash.slice(0, 8)}
-            </code>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-5 px-1 shrink-0"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onCopyHash(entry.hash);
-                  }}
-                >
-                  <Icon name="file-copy" className="size-3" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent sideOffset={8}>{t('gitView.history.copySha')}</TooltipContent>
-            </Tooltip>
+          ) : (
+            <div
+              className="h-2 w-2 translate-y-2 rounded-full shrink-0"
+              style={{ backgroundColor: 'var(--status-success)' }}
+              aria-hidden
+            />
+          )}
+          <div className="min-w-0 flex-1">
+            {/* Ref badges */}
+            {isGraphMode ? (() => {
+              const badges = parseRefBadges(entry.refs);
+              return badges.length > 0 ? (
+                <div className="flex flex-wrap gap-1 mb-0.5">
+                  {badges.map((badge) => (
+                    <span key={badge.label}
+                      className={cn(
+                        'inline-flex items-center px-1.5 py-0 typography-micro rounded font-medium',
+                        badge.isHead
+                          ? 'bg-[var(--chart-1)] text-[var(--primary-foreground)]'
+                          : badge.isTag
+                          ? 'bg-[var(--chart-5)] text-[var(--primary-foreground)]'
+                          : 'bg-[var(--interactive-hover)] text-[var(--foreground)]'
+                      )}>
+                      {badge.label}
+                    </span>
+                  ))}
+                </div>
+              ) : null;
+            })() : null}
+
+            <p className="typography-ui-label font-medium text-foreground line-clamp-1">
+              {entry.message}
+            </p>
+            <div className="flex items-center gap-1 typography-meta text-muted-foreground">
+              <div className="flex items-center gap-1 min-w-0 truncate">
+                <span className="truncate min-w-[3ch]" title={entry.author_name}>
+                  {entry.author_name}
+                </span>
+                <span className="shrink-0">·</span>
+                <span className="truncate min-w-0" title={formatCommitDate(entry.date, timeFormatPreference)}>
+                  {formatCommitDate(entry.date, timeFormatPreference)}
+                </span>
+              </div>
+              <span className="shrink-0">·</span>
+              <code className="shrink-0 font-mono">
+                {entry.hash.slice(0, 8)}
+              </code>
+            </div>
           </div>
-        </div>
-      </button>
+        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute bottom-2 right-3 h-5 px-1 shrink-0"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCopyHash(entry.hash);
+              }}
+            >
+              <Icon name="file-copy" className="size-3" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent sideOffset={8}>{t('gitView.history.copySha')}</TooltipContent>
+        </Tooltip>
+      </div>
 
       {isExpanded && (
         <div className="px-3 pb-2 pl-8 border-t border-border/40">

@@ -8,6 +8,7 @@ import { useI18n } from '@/lib/i18n';
 import { clampPercent, resolveUsageTone } from '@/lib/quota';
 import { UsageProviderCards } from '@/components/usage/UsageProviderCards';
 import { useUsageProviderGroups, type UsageProviderGroup } from '@/components/usage/usageGroups';
+import { WorkStatusSubagentsSection } from '@/components/chat/work-status/WorkStatusSubagentsSection';
 import { cn } from '@/lib/utils';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useQuotaAutoRefresh, useQuotaStore } from '@/stores/useQuotaStore';
@@ -106,12 +107,14 @@ const SessionMetadataOverlay: React.FC<{
   open: boolean;
   onClose: () => void;
   anchorRef: React.RefObject<HTMLElement | null>;
+  currentSessionId: string | null;
+  effectiveDirectory: string | null;
   contextDisplay: ContextDisplay;
   usageGroups: UsageProviderGroup[];
   usageDisplayMode: 'usage' | 'remaining';
   isUsageLoading: boolean;
   timeFormatPreference: TimeFormatPreference;
-}> = ({ open, onClose, anchorRef, contextDisplay, usageGroups, usageDisplayMode, isUsageLoading, timeFormatPreference }) => {
+}> = ({ open, onClose, anchorRef, currentSessionId, effectiveDirectory, contextDisplay, usageGroups, usageDisplayMode, isUsageLoading, timeFormatPreference }) => {
   const { t } = useI18n();
   const panelRef = React.useRef<HTMLDivElement>(null);
   const [shouldRender, setShouldRender] = React.useState(open);
@@ -243,6 +246,7 @@ const SessionMetadataOverlay: React.FC<{
             isLoading={isUsageLoading}
             timeFormatPreference={timeFormatPreference}
           />
+          <WorkStatusSubagentsSection sessionId={currentSessionId} directory={effectiveDirectory} />
         </div>
       </div>
       <style>{`
@@ -465,6 +469,8 @@ export const MobileSessionMetadataButton = React.memo(function MobileSessionMeta
         open={open}
         onClose={() => onOpenChange(false)}
         anchorRef={metadataTriggerRef}
+        currentSessionId={currentSessionId}
+        effectiveDirectory={effectiveDirectory}
         contextDisplay={contextDisplay}
         usageGroups={usageGroups}
         usageDisplayMode={quotaDisplayMode}
